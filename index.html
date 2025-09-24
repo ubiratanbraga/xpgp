@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenPGP.js web PKI Demo (v6)</title>
     <script src="https://cdn.jsdelivr.net/npm/openpgp@6.1.1/dist/openpgp.min.js"></script>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="styles/index.css">
 </head>
 <body>
     <div class="container">
@@ -13,56 +13,89 @@
             <h1>🔐 OpenPGP.js (v6.1.1) web PKI Demo</h1>
             <p>Generate keys, sign messages, and encrypt/decrypt data with modern cryptography</p>
         </div>
-      <div class="warning-section">
-            <h2>⚠️ Important Security Warning ⚠️</h2>
-            <p>This demo is for **educational and testing purposes ONLY**. We strongly advise against generating or using any **real or sensitive PGP private keys** with this web application.</p>
-            <p>For secure PGP key generation and management, always use **trusted desktop applications** like <a href="https://gnupg.org/" target="_blank" rel="noopener noreferrer">GnuPG (GPG)</a> on your **local system**, ideally while **offline**. Web-based key generation carries inherent risks due to the browser environment and potential for malicious code injection.</p>
-        </div><br>
 
         <div class="card-grid">
-            
             <div class="card">
                 <h2>
                     <span class="icon">🔑</span>
                     Key Generation
                     <span id="keyStatus" class="status pending">No Keys</span>
                 </h2>
+                
                 <div class="form-group">
                     <label for="userName">Name:</label>
-                    <input type="text" id="userName" placeholder="Your Name" >
+                    <input type="text" id="userName" placeholder="Your Name" required>
                 </div>
                 <div class="form-group">
                     <label for="userEmail">Email:</label>
-                    <input type="email" id="userEmail" placeholder="Your e-mail">
+                    <input type="email" id="userEmail" placeholder="Your e-mail" required>
                 </div>
                 <div class="form-group">
                     <label for="passphrase">Passphrase:</label>
-                    <input type="password" id="passphrase" placeholder="Enter a strong passphrase">
+                    <input type="password" id="passphrase" placeholder="Enter a strong passphrase" required>
                 </div>
+
+                <!-- Advanced Options Checkbox -->
+                <div class="advanced-options-checkbox">
+                    <label>
+                        <input type="checkbox" id="enableAdvancedOptions">
+                        <span>🔧 Advanced Options</span>
+                    </label>
+                    <div id="advanced-desc" class="hidden">
+                        <small class="help-text" style="margin-left: 24px; margin-top: 4px; display: block;">
+                            Configure key algorithm, size, expiration, and other advanced settings.
+                        </small>
+                    </div>
+                </div>
+
+                <!-- Current Settings Display -->
+                <div id="currentSettingsDisplay" class="current-settings" style="display: none;">
+                    <h4>Current Settings:</h4>
+                    <div class="settings-summary">
+                        <div><strong>Algorithm:</strong> <span id="currentAlgorithm">ECC (Curve25519)</span></div>
+                        <div><strong>Expiration:</strong> <span id="currentExpiration">2 years</span></div>
+                        <div><strong>Usage:</strong> <span id="currentUsage">Sign, Encrypt, Certify</span></div>
+                    </div>
+                </div>
+                
                 <button class="btn" id="generateBtn">Generate Key Pair</button>
-                <div class="key-actions" style="margin-top: 10px;">
+                <div class="key-actions">
                     <button class="btn" id="saveKeyBtn" disabled>Save Key Pair</button>
                     <button class="btn" id="loadKeyBtn">Load Key Pair</button>
                     <input type="file" id="keyFileInput" accept=".json" style="display: none;">
                 </div>
+
+                <!-- Key Information Display -->
+                <div id="keyInfo" class="key-info" style="display: none;">
+                    <h4>📋 Key Information</h4>
+                    <div class="key-info-grid">
+                        <div class="key-info-item">
+                            <span class="key-info-label">Key ID</span>
+                            <span class="key-info-value" id="keyId">-</span>
+                        </div>
+                        <div class="key-info-item">
+                            <span class="key-info-label">Fingerprint</span>
+                            <span class="key-info-value" id="keyFingerprint">-</span>
+                        </div>
+                        <div class="key-info-item">
+                            <span class="key-info-label">Algorithm</span>
+                            <span class="key-info-value" id="keyAlgorithm">-</span>
+                        </div>
+                        <div class="key-info-item">
+                            <span class="key-info-label">Created</span>
+                            <span class="key-info-value" id="keyCreated">-</span>
+                        </div>
+                    </div>
+                    <div class="key-actions" style="margin-top: 15px;">
+                    <button class="btn" id="copyPublicKeyBtn" disabled>Copy Public Key</button>
+                    <button class="btn" id="copyPrivateKeyBtn" disabled>Copy Private Key</button>
+</div>
+                </div>
+
                 <div id="keyOutput" class="output" style="display: none;"></div>
             </div>
 
-            <div class="card hidden">
-                <h2>
-                    <span class="icon">✍️</span>
-                    Sign Message
-                    <span id="signStatus" class="status pending">Keys Required</span>
-                </h2>
-                <div class="form-group">
-                    <label for="messageToSign">Message to Sign:</label>
-                    <textarea id="messageToSign" placeholder="Enter your message here...">Hello, this is a test message that will be digitally signed!</textarea>
-                </div>
-                <button class="btn" id="signBtn" disabled>Sign Message</button>
-                <div id="signOutput" class="output" style="display: none;"></div>
-            </div>
-          
-          <div class="card">
+            <div class="card">
                 <h2>
                     <span class="icon">✍️</span>
                     Sign & Verify Messages
@@ -76,15 +109,14 @@
                 </div>
 
                 <!-- Sign Mode -->
-                
-<div id="signMode" class="tab-content active">
-    <div class="form-group">
-        <label for="messageToSignNew">Message to Sign:</label>
-        <textarea id="messageToSignNew" placeholder="Enter your message here...">Hello, this is a test message that will be digitally signed!</textarea>
-    </div>
-    <button class="btn" id="signBtnNew" disabled>Sign Message</button>
-    <div id="signOutputNew" class="output" style="display: none;"></div>
-</div>
+                <div id="signMode" class="tab-content active">
+                    <div class="form-group">
+                        <label for="messageToSignNew">Message to Sign:</label>
+                        <textarea id="messageToSignNew" placeholder="Enter your message here...">Hello, this is a test message that will be digitally signed!</textarea>
+                    </div>
+                    <button class="btn" id="signBtnNew" disabled>Sign Message</button>
+                    <div id="signOutputNew" class="output" style="display: none;"></div>
+                </div>
 
                 <!-- Verify Mode -->
                 <div id="verifyMode" class="tab-content">
@@ -111,9 +143,26 @@
                     Encrypt Message
                     <span id="encryptStatus" class="status pending">Keys Required</span>
                 </h2>
-                <div class="form-group">
+                
+                <!-- Input Type Toggle -->
+                <div class="input-type-toggle">
+                    <button id="encryptTextBtn" class="btn active">Encrypt Text</button>
+                    <button id="encryptFileBtn" class="btn">Encrypt File</button>
+                </div>
+
+                <!-- Text Input -->
+                <div id="encryptTextContainer" class="form-group">
                     <label for="messageToEncrypt">Message to Encrypt:</label>
                     <textarea id="messageToEncrypt" placeholder="Enter your secret message...">This is a secret message that will be encrypted!</textarea>
+                </div>
+
+                <!-- File Input -->
+                <div id="encryptFileContainer" class="form-group" style="display: none;">
+                    <label for="fileToEncrypt">File to Encrypt:</label>
+                    <input type="file" id="fileToEncrypt" accept="*/*">
+                    <div id="fileInfo" class="file-info" style="display: none;">
+                        <small>Selected: <span id="selectedFileName"></span> (<span id="selectedFileSize"></span>)</small>
+                    </div>
                 </div>
 
                 <button id="toggleEncryptPublicKeyBtn" class="btn">Use Custom Public Key</button>
@@ -141,11 +190,102 @@
                 <div id="decryptOutput" class="output" style="display: none;"></div>
             </div>
         </div>
-  
-    
-      
+
+        <!-- Advanced Options Modal -->
+        <div id="advancedOptionsModal" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>🔧 Advanced Key Generation Options</h3>
+                    <button class="modal-close" id="modalClose">&times;</button>
+                </div>
+
+                <div class="modal-section">
+                    <h4>Key Algorithm</h4>
+                    <div class="radio-group">
+                        <div class="radio-option">
+                            <input type="radio" id="algECC" name="algorithm" value="ecc" checked>
+                            <label for="algECC">
+                                <strong>ECC (Curve25519)</strong> - Modern, fast, and secure
+                                <div class="help-text">Recommended for most users. Provides excellent security with smaller key sizes.</div>
+                            </label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="algRSA2048" name="algorithm" value="rsa2048">
+                            <label for="algRSA2048">
+                                <strong>RSA 2048-bit</strong> - Traditional algorithm
+                                <div class="help-text">Widely compatible but larger key size. Minimum recommended RSA size.</div>
+                            </label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="algRSA4096" name="algorithm" value="rsa4096">
+                            <label for="algRSA4096">
+                                <strong>RSA 4096-bit</strong> - High security RSA
+                                <div class="help-text">Maximum security RSA option but slower performance and larger keys.</div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <h4>Key Expiration</h4>
+                    <div class="form-group">
+                        <select id="keyExpiration">
+                            <option value="0">Never expires (not recommended)</option>
+                            <option value="31536000">1 year</option>
+                            <option value="63072000" selected>2 years (recommended)</option>
+                            <option value="94608000">3 years</option>
+                            <option value="157680000">5 years</option>
+                        </select>
+                        <div class="help-text">Regular key rotation is a security best practice.</div>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <h4>Key Usage</h4>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="usageSign" checked> 
+                            Sign messages and verify signatures
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="usageEncrypt" checked> 
+                            Encrypt and decrypt messages
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="usageCertify" checked> 
+                            Certify other keys (master key capability)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <h4>Additional Options</h4>
+                    <div class="form-group">
+                        <label for="keyComment">Key Comment (optional):</label>
+                        <input type="text" id="keyComment" placeholder="e.g., Work key, Personal key">
+                        <div class="help-text">Optional comment to help identify this key.</div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="modalCancel">Cancel</button>
+                    <button class="btn" id="modalApply">Apply Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="warning-section">
+            <h2>⚠️ Important Security Warning ⚠️</h2>
+            <p>This demo is for <strong>educational and testing purposes ONLY</strong>. We strongly advise against generating or using any <strong>real or sensitive PGP private keys</strong> with this web application.</p>
+            <p>For secure PGP key generation and management, always use <strong>trusted desktop applications</strong> like <a href="https://gnupg.org/" target="_blank" rel="noopener noreferrer">GnuPG (GPG)</a> on your <strong>local system</strong>, ideally while <strong>offline</strong>. Web-based key generation carries inherent risks due to the browser environment and potential for malicious code injection.</p>
+        </div>
     </div>
 
-    <script src="js/pki.js"></script>
+    <!-- Load the main application module -->
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

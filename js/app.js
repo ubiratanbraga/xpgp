@@ -1,0 +1,921 @@
+// app.js - Main application controller with centralized event handling
+import { KeyManager } from './modules/keyManager.js';
+import { CryptoOps } from './modules/cryptoOps.js';
+import { SignVerify } from './modules/signVerify.js';
+import { Encrypt } from './modules/encrypt.js';
+import { Decrypt } from './modules/decrypt.js';
+import { FileUtils } from './utils/fileUtils.js'; // Add this import
+import { Validation } from './utils/validation.js';
+import { Formatting } from './utils/formatting.js';
+import { Clipboard } from './utils/clipboard.js';
+
+class PGPApp {
+    constructor() {
+    
+        // Initialize utilities first
+        this.fileUtils = new FileUtils();
+        this.clipboard = Clipboard; // Add this line
+
+        
+        // Initialize modules
+      //  this.keyManager = new KeyManager();
+       // this.cryptoOps = new CryptoOps();
+       
+        this.keyManager = new KeyManager(this.fileUtils);
+        this.cryptoOps = new CryptoOps(this.keyManager);
+      //  this.signVerify = new SignVerify();
+      this.signVerify = new SignVerify(this.keyManager, this.cryptoOps);
+       this.encrypt = new Encrypt(this.keyManager, this.cryptoOps);
+       
+        this.decrypt = new Decrypt();
+        
+        // Application state
+        this.state = {
+            currentKeyPair: null,
+            currentPassphrase: null, // Add this line
+            isGenerating: false,
+            encryptMode: 'text', // 'text' or 'file'
+            selectedFile: null,
+            advancedConfig: {
+                algorithm: 'ecc',
+                keySize: null,
+                expiration: 63072000, // 2 years
+                usage: {
+                    sign: true,
+                    encrypt: true,
+                    certify: true
+                },
+                comment: ''
+            },
+            currentTab: 'sign'
+        };
+        
+        this.isInitialized = false;
+    }
+
+    async init() {
+        try {
+            console.log('Initializing PGP App...');
+            
+            // Check if OpenPGP.js is loaded
+            if (typeof openpgp === 'undefined') {
+                throw new Error('OpenPGP.js library not loaded');
+            }
+
+            // Setup all event listeners
+            this.setupEventListeners();
+            
+            // Initialize UI state
+            this.initializeUI();
+            
+            this.isInitialized = true;
+            console.log('PGP App initialized successfully');
+            
+        } catch (error) {
+            console.error('Failed to initialize application:', error);
+            this.showError(`Failed to initialize: ${error.message}`);
+        }
+    }
+
+    // ==================== EVENT LISTENER SETUP ====================
+    setupEventListeners() {
+        console.log('Setting up event listeners...');
+        
+        // Key Generation Events
+        this.bindElement('generateBtn', 'click', this.handleGenerateClick.bind(this));
+        
+        // Advanced Options Events
+        this.bindElement('enableAdvancedOptions', 'change', this.handleAdvancedOptionsToggle.bind(this));
+        
+        // Modal Events
+        this.bindElement('modalClose', 'click', () => this.hideModal('advancedOptionsModal'));
+        this.bindElement('modalCancel', 'click', () => this.hideModal('advancedOptionsModal'));
+        this.bindElement('modalApply', 'click', this.handleModalApply.bind(this));
+        
+        // File Operation Events
+        this.bindElement('saveKeyBtn', 'click', this.handleSaveKey.bind(this));
+        this.bindElement('loadKeyBtn', 'click', () => document.getElementById('keyFileInput').click());
+        this.bindElement('keyFileInput', 'change', this.handleFileLoad.bind(this));
+        
+        // Key Copy Events
+        this.bindElement('copyPublicKeyBtn', 'click', this.handleCopyPublicKey.bind(this));
+        this.bindElement('copyPrivateKeyBtn', 'click', this.handleCopyPrivateKey.bind(this));
+        
+        // Tab Events
+        this.bindElement('signTab', 'click', () => this.switchTab('sign'));
+        this.bindElement('verifyTab', 'click', () => this.switchTab('verify'));
+        
+        // Sign/Verify Events
+        this.bindElement('signBtnNew', 'click', this.handleSignMessage.bind(this));
+        this.bindElement('verifyBtn', 'click', this.handleVerifyMessage.bind(this));
+        this.bindElement('toggleVerifyPublicKeyBtn', 'click', this.handleToggleVerifyPublicKey.bind(this));
+        
+        // Encryption Events
+        this.bindElement('encryptBtn', 'click', this.handleEncrypt.bind(this));
+        this.bindElement('toggleEncryptPublicKeyBtn', 'click', this.handleToggleEncryptPublicKey.bind(this));
+        this.bindElement('encryptTextBtn', 'click', this.handleEncryptTextToggle.bind(this));
+        this.bindElement('encryptFileBtn', 'click', this.handleEncryptFileToggle.bind(this));
+        this.bindElement('fileToEncrypt', 'change', this.handleFileSelection.bind(this));
+        
+        // Decryption Events
+        this.bindElement('decryptBtn', 'click', this.handleDecrypt.bind(this));
+        
+        // Advanced Options Form Events
+        this.bindAdvancedOptionsEvents();
+        
+        // Global Events
+        document.addEventListener('keydown', this.handleGlobalKeydown.bind(this));
+        window.addEventListener('error', this.handleGlobalError.bind(this));
+        
+        // Modal overlay click to close
+        this.bindElement('advancedOptionsModal', 'click', (e) => {
+            if (e.target.id === 'advancedOptionsModal') {
+                this.hideModal('advancedOptionsModal');
+            }
+        });
+        
+        console.log('All event listeners setup complete');
+    }
+
+    // Helper method to safely bind events
+    bindElement(id, event, handler) {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener(event, handler);
+            console.log(`✓ Bound ${event} event to #${id}`);
+        } else {
+            console.warn(`⚠ Element #${id} not found for event binding`);
+        }
+    }
+
+    // Bind advanced options form events
+    bindAdvancedOptionsEvents() {
+        // Algorithm radio buttons
+        const algorithmRadios = document.querySelectorAll('input[name="algorithm"]');
+        algorithmRadios.forEach(radio => {
+            radio.addEventListener('change', this.handleAlgorithmChange.bind(this));
+        });
+        
+        // Key expiration
+        this.bindElement('keyExpiration', 'change', this.handleExpirationChange.bind(this));
+        
+        // Usage checkboxes
+        this.bindElement('usageSign', 'change', this.handleUsageChange.bind(this));
+        this.bindElement('usageEncrypt', 'change', this.handleUsageChange.bind(this));
+        this.bindElement('usageCertify', 'change', this.handleUsageChange.bind(this));
+        
+        // Comment field
+        this.bindElement('keyComment', 'input', this.handleCommentChange.bind(this));
+    }
+
+    // ==================== EVENT HANDLERS ====================
+    
+    async handleGenerateClick() {
+        try {
+            this.setLoading('generateBtn', true);
+            this.state.isGenerating = true;
+            
+            // Validate user input
+            const userInfo = this.validateUserInput();
+            
+            // Store the passphrase for later use
+            this.state.currentPassphrase = userInfo.passphrase;
+            
+            // Generate key pair using KeyManager
+            const keyPair = await this.keyManager.generateKeyPair(userInfo, this.state.advancedConfig);
+            
+            // Update application state
+            this.state.currentKeyPair = keyPair;
+            
+            // Update UI
+            this.updateKeyInfo(keyPair);
+            this.showSuccess('Key pair generated successfully!');
+            this.updateButtonStates();
+            
+            console.log('Key pair generated successfully');
+            
+        } catch (error) {
+            console.error('Key generation failed:', error);
+            this.showError(`Key generation failed: ${error.message}`);
+        } finally {
+            this.setLoading('generateBtn', false);
+            this.state.isGenerating = false;
+        }
+    }
+
+    handleAdvancedOptionsToggle(event) {
+        const isEnabled = event.target.checked;
+        const advancedDesc = document.getElementById('advanced-desc');
+        const currentSettingsDisplay = document.getElementById('currentSettingsDisplay');
+        
+        if (isEnabled) {
+            advancedDesc.classList.remove('hidden');
+            currentSettingsDisplay.style.display = 'block';
+            this.showModal('advancedOptionsModal');
+            this.updateCurrentSettingsDisplay();
+        } else {
+            advancedDesc.classList.add('hidden');
+            currentSettingsDisplay.style.display = 'none';
+        }
+    }
+
+    handleModalApply() {
+        this.updateCurrentSettingsDisplay();
+        this.hideModal('advancedOptionsModal');
+        this.showSuccess('Advanced settings applied');
+    }
+
+    async handleSaveKey() {
+        if (!this.state.currentKeyPair) {
+            this.showError('No key pair to save');
+            return;
+        }
+        
+        try {
+            await this.keyManager.saveKeyPair(this.state.currentKeyPair);
+            this.showSuccess('Key pair saved successfully');
+        } catch (error) {
+            console.error('Save failed:', error);
+            this.showError(`Save failed: ${error.message}`);
+        }
+    }
+
+    async handleFileLoad(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        try {
+            this.setLoading('loadKeyBtn', true);
+            
+            // When loading a key, we need to ask for the passphrase
+            const passphrase = prompt('Enter the passphrase for this key:');
+            if (!passphrase) {
+                this.showError('Passphrase is required to load the key');
+                return;
+            }
+            
+            const keyPair = await this.keyManager.loadKeyPair(file);
+            this.state.currentKeyPair = keyPair;
+            this.state.currentPassphrase = passphrase; // Store the passphrase
+            
+            this.updateKeyInfo(keyPair);
+            this.showSuccess('Key pair loaded successfully');
+            this.updateButtonStates();
+            
+        } catch (error) {
+            console.error('Load failed:', error);
+            this.showError(`Load failed: ${error.message}`);
+        } finally {
+            this.setLoading('loadKeyBtn', false);
+        }
+    }
+
+    async handleSignMessage() {
+        if (!this.state.currentKeyPair) {
+            this.showError('No key pair loaded for signing');
+            return;
+        }
+        
+        if (!this.state.currentPassphrase) {
+            this.showError('No passphrase available. Please generate or load a key pair first.');
+            return;
+        }
+        
+        try {
+            const message = document.getElementById('messageToSignNew').value.trim();
+            if (!message) {
+                this.showError('Please enter a message to sign');
+                return;
+            }
+            
+            this.setLoading('signBtnNew', true);
+            
+            // Pass the stored passphrase to the signing method
+            const signedMessage = await this.signVerify.signMessage(
+                message, 
+                this.state.currentKeyPair, 
+                this.state.currentPassphrase
+            );
+            
+            this.showOutput('signOutputNew', 'Signed Message:', signedMessage);
+            this.showSuccess('Message signed successfully');
+            
+        } catch (error) {
+            console.error('Signing failed:', error);
+            this.showError(`Signing failed: ${error.message}`);
+        } finally {
+            this.setLoading('signBtnNew', false);
+        }
+    }
+
+    async handleVerifyMessage() {
+        try {
+            const signedMessage = document.getElementById('signedMessageToVerify').value.trim();
+            if (!signedMessage) {
+                this.showError('Please enter a signed message to verify');
+                return;
+            }
+            
+            this.setLoading('verifyBtn', true);
+            
+            // Check if using custom public key
+            const customKeyContainer = document.getElementById('verifyCustomPublicKeyContainer');
+            let publicKey = null;
+            
+            if (customKeyContainer.style.display !== 'none') {
+                const customKeyText = document.getElementById('verifyCustomPublicKey').value.trim();
+                if (customKeyText) {
+                    publicKey = customKeyText;
+                }
+            } else if (this.state.currentKeyPair) {
+                publicKey = this.state.currentKeyPair.publicKey;
+            }
+            
+            const result = await this.signVerify.verifyMessage(signedMessage, publicKey);
+            
+            this.showVerifyResult('verifyOutput', result);
+            
+        } catch (error) {
+            console.error('Verification failed:', error);
+            this.showError(`Verification failed: ${error.message}`);
+        } finally {
+            this.setLoading('verifyBtn', false);
+        }
+    }
+
+    handleToggleVerifyPublicKey() {
+        const container = document.getElementById('verifyCustomPublicKeyContainer');
+        const button = document.getElementById('toggleVerifyPublicKeyBtn');
+        
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            button.textContent = 'Use Own Public Key';
+        } else {
+            container.style.display = 'none';
+            button.textContent = 'Use Custom Public Key';
+        }
+    }
+
+    async handleEncrypt() {
+        try {
+            this.setLoading('encryptBtn', true);
+            
+            // Check if using custom public key
+            const customKeyContainer = document.getElementById('encryptCustomPublicKeyContainer');
+            let publicKey = null;
+            
+            if (customKeyContainer.style.display !== 'none') {
+                const customKeyText = document.getElementById('encryptCustomPublicKey').value.trim();
+                if (customKeyText) {
+                    publicKey = customKeyText;
+                }
+            } else if (this.state.currentKeyPair) {
+                publicKey = this.state.currentKeyPair.publicKey;
+            }
+            
+            if (!publicKey) {
+                this.showError('No public key available for encryption');
+                return;
+            }
+
+            let result;
+            let resultTitle;
+            let successMessage;
+
+            if (this.state.encryptMode === 'file') {
+                // File encryption
+                const file = this.state.selectedFile;
+                if (!file) {
+                    this.showError('Please select a file to encrypt');
+                    return;
+                }
+
+                result = await this.cryptoOps.encryptFile(file, publicKey);
+                resultTitle = `Encrypted File: ${file.name}`;
+                successMessage = `File "${file.name}" encrypted successfully`;
+                
+                // Add download button for encrypted file
+                this.addFileDownloadButton('encryptOutput', result, `${file.name}.pgp`);
+            } else {
+                // Text encryption (default)
+                const message = document.getElementById('messageToEncrypt').value.trim();
+                if (!message) {
+                    this.showError('Please enter a message to encrypt');
+                    return;
+                }
+
+                result = await this.cryptoOps.encryptMessage(message, publicKey);
+                resultTitle = 'Encrypted Message:';
+                successMessage = 'Message encrypted successfully';
+                
+                this.showOutput('encryptOutput', resultTitle, result);
+            }
+            
+            this.showSuccess(successMessage);
+            
+        } catch (error) {
+            console.error('Encryption failed:', error);
+            this.showError(`Encryption failed: ${error.message}`);
+        } finally {
+            this.setLoading('encryptBtn', false);
+        }
+    }
+
+    handleToggleEncryptPublicKey() {
+        const container = document.getElementById('encryptCustomPublicKeyContainer');
+        const button = document.getElementById('toggleEncryptPublicKeyBtn');
+        
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            button.textContent = 'Use Own Public Key';
+        } else {
+            container.style.display = 'none';
+            button.textContent = 'Use Custom Public Key';
+        }
+    }
+
+    handleEncryptTextToggle() {
+        document.getElementById('encryptTextBtn').classList.add('active');
+        document.getElementById('encryptFileBtn').classList.remove('active');
+        document.getElementById('encryptTextContainer').style.display = 'block';
+        document.getElementById('encryptFileContainer').style.display = 'none';
+        document.getElementById('encryptBtn').textContent = 'Encrypt Message';
+        this.state.encryptMode = 'text';
+    }
+
+    handleEncryptFileToggle() {
+        document.getElementById('encryptFileBtn').classList.add('active');
+        document.getElementById('encryptTextBtn').classList.remove('active');
+        document.getElementById('encryptFileContainer').style.display = 'block';
+        document.getElementById('encryptTextContainer').style.display = 'none';
+        document.getElementById('encryptBtn').textContent = 'Encrypt File';
+        this.state.encryptMode = 'file';
+    }
+
+    handleFileSelection(event) {
+        const file = event.target.files[0];
+        if (file) {
+            const fileInfo = document.getElementById('fileInfo');
+            const fileName = document.getElementById('selectedFileName');
+            const fileSize = document.getElementById('selectedFileSize');
+            
+            fileName.textContent = file.name;
+            fileSize.textContent = this.formatFileSize(file.size);
+            fileInfo.style.display = 'block';
+            
+            this.state.selectedFile = file;
+        } else {
+            document.getElementById('fileInfo').style.display = 'none';
+            this.state.selectedFile = null;
+        }
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async handleDecrypt() {
+        if (!this.state.currentKeyPair) {
+            this.showError('No private key loaded for decryption');
+            return;
+        }
+        
+        if (!this.state.currentPassphrase) {
+            this.showError('No passphrase available. Please generate or load a key pair first.');
+            return;
+        }
+        
+        try {
+            const encryptedMessage = document.getElementById('messageToDecrypt').value.trim();
+            if (!encryptedMessage) {
+                this.showError('Please enter an encrypted message to decrypt');
+                return;
+            }
+            
+            this.setLoading('decryptBtn', true);
+            
+            const decryptedMessage = await this.cryptoOps.decryptMessage(encryptedMessage, this.state.currentPassphrase);
+            
+            this.showOutput('decryptOutput', 'Decrypted Message:', decryptedMessage);
+            this.showSuccess('Message decrypted successfully');
+            
+        } catch (error) {
+            console.error('Decryption failed:', error);
+            this.showError(`Decryption failed: ${error.message}`);
+        } finally {
+            this.setLoading('decryptBtn', false);
+        }
+    }
+
+    // Advanced options handlers
+    handleAlgorithmChange(event) {
+        this.state.advancedConfig.algorithm = event.target.value;
+        console.log('Algorithm changed to:', event.target.value);
+    }
+
+    handleExpirationChange(event) {
+        this.state.advancedConfig.expiration = parseInt(event.target.value);
+        console.log('Expiration changed to:', event.target.value);
+    }
+
+    handleUsageChange() {
+        this.state.advancedConfig.usage = {
+            sign: document.getElementById('usageSign').checked,
+            encrypt: document.getElementById('usageEncrypt').checked,
+            certify: document.getElementById('usageCertify').checked
+        };
+        console.log('Usage changed to:', this.state.advancedConfig.usage);
+    }
+
+    handleCommentChange(event) {
+        this.state.advancedConfig.comment = event.target.value;
+        console.log('Comment changed to:', event.target.value);
+    }
+
+ // Updated handleCopyPublicKey method
+async handleCopyPublicKey() {
+    if (!this.state.currentKeyPair || !this.state.currentKeyPair.publicKey) {
+        this.showError('No public key available to copy');
+        return;
+    }
+    
+    try {
+        // Get the public key as armored text
+        const publicKeyArmored = typeof this.state.currentKeyPair.publicKey === 'string' 
+            ? this.state.currentKeyPair.publicKey 
+            : this.state.currentKeyPair.publicKey.armor();
+        
+        // Use the Clipboard utility
+        const success = await Clipboard.copyToClipboard(publicKeyArmored);
+        
+        if (success) {
+            this.updateCopyButtonState('copyPublicKeyBtn', 'copied');
+            this.showSuccess('Public key copied to clipboard');
+        } else {
+            this.showError('Failed to copy public key to clipboard');
+        }
+        
+    } catch (error) {
+        console.error('Failed to copy public key:', error);
+        this.showError(`Failed to copy public key: ${error.message}`);
+    }
+}
+
+// Updated handleCopyPrivateKey method
+async handleCopyPrivateKey() {
+    if (!this.state.currentKeyPair || !this.state.currentKeyPair.privateKey) {
+        this.showError('No private key available to copy');
+        return;
+    }
+    
+    try {
+        // Get the private key as armored text
+        const privateKeyArmored = typeof this.state.currentKeyPair.privateKey === 'string' 
+            ? this.state.currentKeyPair.privateKey 
+            : this.state.currentKeyPair.privateKey.armor();
+        
+        // Use the Clipboard utility
+        const success = await Clipboard.copyToClipboard(privateKeyArmored);
+        
+        if (success) {
+            this.updateCopyButtonState('copyPrivateKeyBtn', 'copied');
+            this.showSuccess('Private key copied to clipboard');
+        } else {
+            this.showError('Failed to copy private key to clipboard');
+        }
+        
+    } catch (error) {
+        console.error('Failed to copy private key:', error);
+        this.showError(`Failed to copy private key: ${error.message}`);
+    }
+}
+
+// New method to update copy button states with visual feedback
+updateCopyButtonState(buttonId, state) {
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+    
+    // Store original text and classes if not already stored
+    if (!button.hasAttribute('data-original-text')) {
+        button.setAttribute('data-original-text', button.textContent);
+        button.setAttribute('data-original-classes', button.className);
+    }
+    
+    const originalText = button.getAttribute('data-original-text');
+    const originalClasses = button.getAttribute('data-original-classes');
+    
+    switch (state) {
+        case 'copied':
+            button.textContent = '✅ Copied!';
+            button.className = 'btn copy-btn copied'; // Use your CSS classes
+            button.disabled = true;
+            
+            // Reset button after 2 seconds
+            setTimeout(() => {
+                this.updateCopyButtonState(buttonId, 'normal');
+            }, 2000);
+            break;
+            
+        case 'normal':
+        default:
+            button.textContent = originalText;
+            button.className = originalClasses; // Restore original classes
+            button.disabled = false;
+            break;
+    }
+}
+
+
+
+    // Global event handlers
+    handleGlobalKeydown(event) {
+        if (event.key === 'Escape') {
+            // Close any open modals
+            this.hideModal('advancedOptionsModal');
+        }
+    }
+
+    handleGlobalError(event) {
+        console.error('Global error:', event.error);
+        this.showError(`Unexpected error: ${event.error?.message || 'Unknown error'}`);
+    }
+
+    // ==================== UI HELPER METHODS ====================
+    
+    initializeUI() {
+        // Initialize tab state
+        this.switchTab('sign');
+        
+        // Set initial button states
+        this.updateButtonStates();
+        
+        // Hide custom key containers initially
+        document.getElementById('verifyCustomPublicKeyContainer').style.display = 'none';
+        document.getElementById('encryptCustomPublicKeyContainer').style.display = 'none';
+        
+        console.log('UI initialized');
+    }
+
+    switchTab(tabName) {
+        // Update tab buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        
+        if (tabName === 'sign') {
+            document.getElementById('signTab').classList.add('active');
+            document.getElementById('signMode').classList.add('active');
+        } else if (tabName === 'verify') {
+            document.getElementById('verifyTab').classList.add('active');
+            document.getElementById('verifyMode').classList.add('active');
+        }
+        
+        this.state.currentTab = tabName;
+        console.log(`Switched to ${tabName} tab`);
+    }
+
+    showModal(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.classList.add('active');
+        }
+    }
+
+    hideModal(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    }
+
+    setLoading(buttonId, isLoading) {
+        const button = document.getElementById(buttonId);
+        if (button) {
+            button.disabled = isLoading;
+            if (isLoading) {
+                button.setAttribute('data-original-text', button.textContent);
+                button.textContent = 'Processing...';
+            } else {
+                const originalText = button.getAttribute('data-original-text') || button.textContent;
+                button.textContent = originalText;
+                button.removeAttribute('data-original-text');
+            }
+        }
+    }
+
+    showError(message) {
+        console.error('Error:', message);
+        // You can implement a toast or notification system here
+        alert(`Error: ${message}`);
+    }
+
+    showSuccess(message) {
+        console.log('Success:', message);
+        // You can implement a toast or notification system here
+        // For now, just log to console
+    }
+
+    showOutput(outputId, title, content) {
+        const outputElement = document.getElementById(outputId);
+        if (outputElement) {
+            outputElement.innerHTML = `
+                <h4>${title}</h4>
+                <pre>${content}</pre>
+                <button onclick="navigator.clipboard.writeText(\`${content.replace(/`/g, '\\`')}\`)">Copy to Clipboard</button>
+            `;
+            outputElement.style.display = 'block';
+        }
+    }
+
+    addFileDownloadButton(outputId, content, filename) {
+        const outputElement = document.getElementById(outputId);
+        if (outputElement) {
+            const blob = new Blob([content], { type: 'application/pgp-encrypted' });
+            const url = URL.createObjectURL(blob);
+            
+            outputElement.innerHTML = `
+                <h4>Encrypted File Ready</h4>
+                <p>File: ${filename}</p>
+                <button onclick="const a = document.createElement('a'); a.href='${url}'; a.download='${filename}'; a.click();">Download Encrypted File</button>
+                <br><br>
+                <details>
+                    <summary>View PGP Content</summary>
+                    <pre>${content}</pre>
+                    <button onclick="navigator.clipboard.writeText(\`${content.replace(/`/g, '\\`')}\`)">Copy PGP Content</button>
+                </details>
+            `;
+            outputElement.style.display = 'block';
+        }
+    }
+
+    showVerifyResult(outputId, result) {
+        const outputElement = document.getElementById(outputId);
+        if (outputElement) {
+            const isValid = result.valid;
+            const statusClass = isValid ? 'success' : 'error';
+            
+            outputElement.innerHTML = `
+                <h4>Verification Result</h4>
+                <div class="verify-result ${statusClass}">
+                    <p><strong>Status:</strong> ${isValid ? '✅ Valid' : '❌ Invalid'}</p>
+                    <p><strong>Message:</strong> ${result.message}</p>
+                    ${result.signer ? `<p><strong>Signer:</strong> ${result.signer}</p>` : ''}
+                </div>
+            `;
+            outputElement.style.display = 'block';
+        }
+    }
+
+    updateKeyInfo(keyPair) {
+        if (!keyPair || !keyPair.metadata) return;
+         // Add this temporary debug line:
+    console.log('Key pair metadata:', keyPair.metadata);
+        
+        const keyInfo = document.getElementById('keyInfo');
+        if (keyInfo) {
+            document.getElementById('keyId').textContent = keyPair.metadata.keyId || '-';
+            document.getElementById('keyFingerprint').textContent = keyPair.metadata.fingerprint || '-';
+            document.getElementById('keyAlgorithm').textContent = keyPair.metadata.algorithm || '-';
+            document.getElementById('keyCreated').textContent = keyPair.metadata.created || '-';
+            keyInfo.style.display = 'block';
+        }
+    }
+
+    updateButtonStates() {
+        const hasKeys = this.state.currentKeyPair !== null;
+        
+        // Enable/disable buttons based on key availability
+        this.setButtonState('saveKeyBtn', hasKeys);
+        this.setButtonState('signBtnNew', hasKeys);
+        this.setButtonState('verifyBtn', true); // Can verify with custom key
+        this.setButtonState('encryptBtn', true); // Can encrypt with custom key
+        this.setButtonState('decryptBtn', hasKeys);
+        this.setButtonState('copyPublicKeyBtn', hasKeys);
+        this.setButtonState('copyPrivateKeyBtn', hasKeys);
+        
+        // Update status indicators
+        this.updateStatusIndicators(hasKeys);
+    }
+
+    setButtonState(buttonId, enabled) {
+        const button = document.getElementById(buttonId);
+        if (button) {
+            button.disabled = !enabled;
+        }
+    }
+
+    updateStatusIndicators(hasKeys) {
+        const status = hasKeys ? 'Ready' : 'Keys Required';
+        const statusClass = hasKeys ? 'ready' : 'pending';
+        
+        this.updateStatus('keyStatus', hasKeys ? 'Keys Loaded' : 'No Keys', statusClass);
+        this.updateStatus('signVerifyStatus', status, statusClass);
+        this.updateStatus('encryptStatus', status, statusClass);
+        this.updateStatus('decryptStatus', status, statusClass);
+    }
+
+    updateStatus(statusId, text, className) {
+        const statusElement = document.getElementById(statusId);
+        if (statusElement) {
+            statusElement.textContent = text;
+            statusElement.className = `status ${className}`;
+        }
+    }
+
+    updateCurrentSettingsDisplay() {
+        const algorithmText = this.getAlgorithmDisplayText(this.state.advancedConfig.algorithm);
+        const expirationText = this.getExpirationDisplayText(this.state.advancedConfig.expiration);
+        const usageText = this.getUsageDisplayText(this.state.advancedConfig.usage);
+        
+        const currentAlgorithm = document.getElementById('currentAlgorithm');
+        const currentExpiration = document.getElementById('currentExpiration');
+        const currentUsage = document.getElementById('currentUsage');
+        
+        if (currentAlgorithm) currentAlgorithm.textContent = algorithmText;
+        if (currentExpiration) currentExpiration.textContent = expirationText;
+        if (currentUsage) currentUsage.textContent = usageText;
+    }
+
+    // ==================== UTILITY METHODS ====================
+    
+    validateUserInput() {
+        const name = document.getElementById('userName').value.trim();
+        const email = document.getElementById('userEmail').value.trim();
+        const passphrase = document.getElementById('passphrase').value;
+        
+        if (!name) throw new Error('Name is required');
+        if (!email) throw new Error('Email is required');
+        if (!passphrase) throw new Error('Passphrase is required');
+        
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            throw new Error('Please enter a valid email address');
+        }
+        
+        if (passphrase.length < 8) {
+            throw new Error('Passphrase must be at least 8 characters long');
+        }
+        
+        return { name, email, passphrase };
+    }
+
+    getAlgorithmDisplayText(algorithm) {
+        switch (algorithm) {
+            case 'ecc': return 'ECC (Curve25519)';
+            case 'rsa2048': return 'RSA 2048-bit';
+            case 'rsa4096': return 'RSA 4096-bit';
+            default: return 'ECC (Curve25519)';
+        }
+    }
+
+    getExpirationDisplayText(expiration) {
+        switch (expiration) {
+            case 0: return 'Never expires';
+            case 31536000: return '1 year';
+            case 63072000: return '2 years';
+            case 94608000: return '3 years';
+            case 157680000: return '5 years';
+            default: return '2 years';
+        }
+    }
+
+    getUsageDisplayText(usage) {
+        const capabilities = [];
+        if (usage.sign) capabilities.push('Sign');
+        if (usage.encrypt) capabilities.push('Encrypt');
+        if (usage.certify) capabilities.push('Certify');
+        return capabilities.join(', ') || 'None';
+    }
+
+    // Debug methods
+    getStatus() {
+        return {
+            initialized: this.isInitialized,
+            hasKeys: this.state.currentKeyPair !== null,
+            hasPassphrase: this.state.currentPassphrase !== null,
+            currentTab: this.state.currentTab,
+            isGenerating: this.state.isGenerating
+        };
+    }
+}
+
+// Initialize the application when DOM is ready
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM loaded, initializing PGP App...');
+    
+    // Create and initialize the main app
+    window.pgpApp = new PGPApp();
+    await window.pgpApp.init();
+    
+    // Expose for debugging
+    window.OpenPGPDemo = {
+        app: window.pgpApp,
+        getStatus: () => window.pgpApp.getStatus()
+    };
+    
+    console.log('PGP App ready! Access via window.pgpApp or window.OpenPGPDemo');
+});
